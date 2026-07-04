@@ -179,6 +179,10 @@ void irq0_handler(void) {
     if (timer_callback != NULL) {
         timer_callback();
     }
+
+    // Call timer interrupt callback for debugging
+    extern void timer_int_callback(void);
+    timer_int_callback();
 }
 
 // Keyboard interrupt handler (IRQ1)
@@ -196,6 +200,10 @@ void irq1_handler(void) {
     // Signal that a key is available
     extern uint8_t keyboard_key_available_flag;
     keyboard_key_available_flag = 1;
+
+    // Call keyboard interrupt callback for debugging
+    extern void keyboard_int_callback(void);
+    keyboard_int_callback();
 }
 
 // Other IRQ handlers (minimal implementations for now)

@@ -192,6 +192,9 @@ void vmm_enable_paging(void) {
     __asm__ __volatile__("mov %%cr0, %0" : "=r"(cr0));
     cr0 |= PAGE_PRESENT; // Set the paging bit (bit 31)
     __asm__ __volatile__("mov %0, %%cr0" : : "r"(cr0));
+    // Far jump to flush instruction pipeline after changing CR0
+    __asm__ __volatile__("jmpl $0x08, $next\n\t"
+                         "next:");
 }
 
 // Disable paging

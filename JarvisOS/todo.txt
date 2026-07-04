@@ -19,3 +19,7 @@
 [ ] Add reboot/power state fixes (currently freeze on reboot command)
 [ ] Add proper GPF/page-fault diagnostic output in exception_handler (currently just halts silently)
 [ ] Clean up unused-parameter warnings in syscall.c stubs (cosmetic, low priority)
+
+
+
+use lua for the ai

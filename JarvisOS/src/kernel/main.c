@@ -1,6 +1,11 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include "shell/commands.h"
+
+// Global variables for interrupt counting (must be volatile as they're modified in IRQ handlers)
+volatile uint32_t timer_ticks = 0;
+volatile uint32_t keyboard_interrupts = 0;
 
 // Simple VGA text mode driver for early debugging
 static volatile uint16_t* vga_buffer = (uint16_t*)0xB8000;
@@ -21,7 +26,6 @@ extern void hal_free_page(void* addr);
 extern void hal_set_timer_frequency(uint32_t hz);
 extern uint64_t hal_get_ticks(void);
 extern int hal_keyboard_key_available(void);
-extern int hal_dma_alloc_channel(void);
 extern int hal_set_cpu_cstate(uint8_t state);
 extern const char* hal_get_cpu_vendor(void);
 extern uint32_t hal_get_cpu_features(void);
@@ -35,15 +39,29 @@ static inline void outb(uint16_t port, uint8_t val) {
     __asm__ __volatile__("outb %0, %1" : : "a"(val), "Nd"(port));
 }
 
+static inline uint8_t inb(uint16_t port) {
+    uint8_t ret;
+    __asm__ __volatile__("inb %1, %0" : "=a"(ret) : "Nd"(port));
+    return ret;
+}
+
 static void update_cursor(int pos) {
     outb(0x3D4, 0x0F);
     outb(0x3D5, (uint8_t)(pos & 0xFF));
     outb(0x3D4, 0x0E);
     outb(0x3D5, (uint8_t)((pos >> 8) & 0xFF));
 }
+
 void vga_putchar(char c) {
     if (c == '\n') {
-        vga_index = (vga_index / 80 + 1) * 80;
+        // Move to start of next line
+        size_t next_line_start = ((vga_index / 80) + 1) * 80;
+        if (next_line_start >= 80 * 25) {
+            // We're at the bottom - wrap to top
+            vga_index = 0;
+        } else {
+            vga_index = next_line_start;
+        }
     } else if (c == '\b') {  // Backspace
         if (vga_index > 0) {
             vga_index--;
@@ -81,129 +99,142 @@ void debug_mark(int slot, char c, uint8_t color) {
     vga[offset + 1] = color;
 }
 
-// Timer callback function to demonstrate periodic interrupts
-static void timer_callback(void) {
-    static int dots = 0;
-    vga_putchar('.');
-    dots++;
-    if (dots >= 80) {  // New line after 80 dots
-        vga_putchar('\n');
-        dots = 0;
+// Keyboard interrupt callback (called from IRQ handler)
+void keyboard_int_callback(void) {
+    keyboard_interrupts++;
+}
+
+// Timer interrupt callback (called from IRQ handler)
+void timer_int_callback(void) {
+    timer_ticks++;
+    // Show a visible timer tick every 10 interrupts in top-left corner
+    if (timer_ticks % 10 == 0) {
+        // Top-left corner character
+        vga_buffer[0] = (vga_buffer[0] & 0xFF00) | ((timer_ticks / 10) % 16);
     }
 }
 
-// Simple command interpreter
+// Simple command implementations (minimal for debugging)
+static void cmd_help(const char *args) {
+    (void)args;
+    vga_puts("Help: mem timer reboot\n");
+}
+
+static void cmd_mem(const char *args) {
+    (void)args;
+    vga_puts("mem test\n");
+    void* page = hal_alloc_page();
+    if (page != NULL) {
+        vga_puts("alloc ok\n");
+        hal_free_page(page);
+        vga_puts("free ok\n");
+    } else {
+        vga_puts("alloc FAIL\n");
+    }
+}
+
+static void cmd_timer(const char *args) {
+    (void)args;
+    vga_puts("timer test\n");
+    hal_set_timer_frequency(10);
+    // Simple delay
+    for (volatile int i = 0; i < 1000000; i++) {}
+    hal_set_timer_frequency(100);
+    vga_puts("timer done\n");
+}
+
+static void cmd_reboot(const char *args) {
+    (void)args;
+    vga_puts("reboot\n");
+    outb(0x64, 0xFE);
+}
+
+// Command interpreter - simplified for debugging with non-blocking input
 static void run_command_interpreter(void) {
-    vga_puts("\n $ ");
-    char buffer[128];
+    vga_puts("\nDBG> ");  // Changed prompt to make it obvious
+    char buffer[16];
     int pos = 0;
 
     while (1) {
-        // Check for keypress
-        int c = hal_keyboard_getchar();
+        // Non-blocking keyboard check
+        if (hal_keyboard_key_available()) {
+            int c = hal_keyboard_getchar();
 
-            if (c == '\r' || c == '\n') {  // Enter key
-                buffer[pos] = '\0';  // Null terminate
+            if (c == '\r' || c == '\n') {  // Enter
+                buffer[pos] = '\0';
                 vga_puts("\n");
 
-                // Process command
-                if (strcmp(buffer, "help") == 0) {
-                    vga_puts("Available commands:\n");
-                    vga_puts("  help - Show this help\n");
-                    vga_puts("  mem - Test memory allocation\n");
-                    vga_puts("  timer - Test timer frequency\n");
-                    vga_puts("  power [0-4] - Set CPU C-state\n");
-                    vga_puts("  clear - Clear screen\n");
-                    vga_puts("  reboot - Reboot system (QEMU specific)\n");
-                } else if (strcmp(buffer, "mem") == 0) {
-                    vga_puts("Testing memory allocation...\n");
-                    void* page = hal_alloc_page();
-                    if (page != NULL) {
-                        vga_puts("Allocated page at 0x");
-                        vga_puthex((uint32_t)page);
-                        vga_puts("\n");
-
-                        // Write test pattern
-                        for (int i = 0; i < 64; i++) {
-                            ((char*)page)[i] = 'A' + (i % 26);
-                        }
-                        ((char*)page)[64] = '\0';
-
-                        vga_puts("Page contents: ");
-                        vga_puts((char*)page);
-                        vga_puts("\n");
-
-                        hal_free_page(page);
-                        vga_puts("Page freed.\n");
-                    } else {
-                        vga_puts("Failed to allocate page!\n");
-                    }
-                } else if (strcmp(buffer, "timer") == 0) {
-                    vga_puts("Testing timer...\n");
-                    hal_set_timer_frequency(10);  // 10 Hz
-                    vga_puts("Timer set to 10 Hz for 5 seconds...\n");
-
-                    extern void hal_sleep_ms(uint32_t ms);
-                    hal_sleep_ms(5000);
-
-                    hal_set_timer_frequency(100);  // Back to 100 Hz
-                    vga_puts("Timer test complete.\n");
-
-                } else if (strncmp(buffer, "power ", 6) == 0) {
-                    int state = buffer[6] - '0';
-                    if (state >= 0 && state <= 4) {
-                        vga_puts("Setting CPU C-state to ");
-                        vga_putchar('0' + state);
-                        vga_puts("...\n");
-                        int result = hal_set_cpu_cstate(state);
-                        if (result == 0) {
-                            vga_puts("CPU C-state set successfully.\n");
-                        } else {
-                            vga_puts("Failed to set CPU C-state!\n");
-                        }
-                    } else {
-                        vga_puts("Invalid power state. Use 0-4.\n");
-                    }
-                } else if (strcmp(buffer, "clear") == 0) {
-                    for (size_t i = 0; i < 80 * 25; i++) {
-                        vga_buffer[i] = 0x0F00 | ' ';
-                    }
-                    vga_index = 0;
-                } else if (strcmp(buffer, "reboot") == 0) {
-                    vga_puts("Rebooting...\n");
-                    // Reboot via keyboard controller (works in QEMU/Bochs)
-                    outb(0x64, 0xFE);
-                    // Should not return
-                } else if (buffer[0] != '\0') {
-                    vga_puts("Unknown command: '");
+                if (strcmp(buffer, "help") == 0) cmd_help(NULL);
+                else if (strcmp(buffer, "mem") == 0) cmd_mem(NULL);
+                else if (strcmp(buffer, "timer") == 0) cmd_timer(NULL);
+                else if (strcmp(buffer, "reboot") == 0) cmd_reboot(NULL);
+                else {
+                    vga_puts("? ");
                     vga_puts(buffer);
-                    vga_puts("'. Type 'help' for available commands.\n");
+                    vga_puts("\n");
                 }
 
-                // Reset for next command
                 pos = 0;
-                vga_puts(" $ ");
-            } else if (c == '\b' && pos > 0) {  // Backspace
+                vga_puts("DBG> ");
+            } else if (c == '\b' && pos > 0) {
                 pos--;
                 vga_putchar('\b');
                 vga_putchar(' ');
                 vga_putchar('\b');
-            } else if (c >= 32 && c <= 126 && pos < 127) {  // Printable ASCII
+            } else if (c >= 32 && c <= 126 && pos < 15) {
                 buffer[pos++] = c;
                 vga_putchar(c);
             }
+        }
+
+        // Show heartbeat in bottom-right corner every 50 timer ticks
+        static uint32_t last_heartbeat = 0;
+        if (timer_ticks - last_heartbeat >= 50) {
+            last_heartbeat = timer_ticks;
+            // Bottom-right corner
+            size_t pos = 80 * 25 - 1;
+            vga_buffer[pos] = (vga_buffer[pos] & 0xFF00) | (((timer_ticks / 50) % 10) + '0');
+        }
+
+        // Halt if idle, waiting for interrupt
+        __asm__ __volatile__("hlt");
     }
 }
 
 // Kernel entry point (called from boot2.asm after switching to protected mode)
 void kernel_main(void)
 {
+    // STAGE 1: VGA TEST
+    vga_puts("STAGE1: VGA ok\n");
+    for (int i = 0; i < 10; i++) {
+        vga_putchar('0' + i);
+    }
+    vga_puts("\n");
+
+    // STAGE 2: HAL INIT
+    vga_puts("STAGE2: HAL init\n");
     hal_init();
-    // (future) idt_init();
-    // debug_mark(2, 'I', 0x0B);
+    vga_puts("STAGE2: HAL done\n");
 
-    // (future) pmm_init(...);
-    // debug_mark(3, 'P', 0x0C);
+    // STAGE 3: TIMER SETUP
+    vga_puts("STAGE3: Timer setup\n");
+    hal_set_timer_frequency(100);  // 100 Hz
+    vga_puts("STAGE3: Timer done\n");
 
+    // STAGE 4: KEYBOARD SETUP
+    vga_puts("STAGE4: Keyboard setup\n");
+    hal_keyboard_init();
+    vga_puts("STAGE4: Keyboard done\n");
+
+    // STAGE 5: COMMAND REGISTRATION
+    vga_puts("STAGE5: Commands\n");
+    shell_register_command("help", cmd_help, "Help");
+    shell_register_command("mem", cmd_mem, "Memory test");
+    shell_register_command("timer", cmd_timer, "Timer test");
+    shell_register_command("reboot", cmd_reboot, "Reboot");
+    vga_puts("STAGE5: Commands done\n");
+
+    // STAGE 6: ENTER INTERPRETER
+    vga_puts("STAGE6: Entering interpreter\n");
     run_command_interpreter();
 }

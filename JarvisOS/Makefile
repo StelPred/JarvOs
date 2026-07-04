@@ -23,10 +23,10 @@ LIBC_OBJS = $(LIBC_SRCS:.c=.o)
 # Source files
 BOOT_ASM = src/boot/boot.asm
 BOOT2_ASM = src/boot/boot2.asm
-BOOT2_ASM_DEPS = src/boot/gdt.asm
 
 # C source files
 KERNEL_C_SRCS = \
+	src/kernel/shell/commands.c \
 	src/kernel/entry.asm \
 	src/kernel/main.c \
 	src/kernel/core/cpu.c \
@@ -74,13 +74,9 @@ boot2.bin: $(BOOT2_ASM) $(BOOT2_ASM_DEPS)
 
 # Build kernel (link with libc for now, though we are freestanding, we can use our libc)
 kernel.bin: $(KERNEL_OBJS) libc.a
-	$(LD) $(LDFLAGS) -o $@ $^ libc.a
+	$(LD) $(LDFLAGS) -o $@ $^
 
 # Create floppy image: boot sector + stage2 + kernel
-# We'll put:
-# - Sector 1: boot.bin (512 bytes)
-# - Sectors 2-3: boot2.bin (should be < 1024 bytes)
-# - Sectors 4-?: kernel.bin (the rest)
 floppy.img: boot.bin boot2.bin kernel.bin
 	# Create empty floppy image (1.44MB = 2880 sectors * 512 bytes)
 	dd if=/dev/zero of=floppy.img bs=512 count=2880 2>/dev/null || \

@@ -29,18 +29,22 @@ start:
     mov ds, ax
     mov es, ax
     mov ss, ax
-    mov sp, 0x7FFF
+    mov sp, 0x7C00
 
     ; -------------------------
-    ; ENABLE A20 FIRST 
+    ; ENABLE A20 FIRST
     ; -------------------------
     call enable_a20
-
+    mov ah, 0x0E
+    mov al, 'A'
+    int 0x10
     ; -------------------------
     ; LOAD GDT
     ; -------------------------
     lgdt [gdt_descriptor]
-
+    mov ah, 0x0E
+    mov al, 'G'
+    int 0x10
     ; -------------------------
     ; LOAD KERNEL (real mode, dl still holds boot drive from boot.asm)
     ; -------------------------
@@ -50,7 +54,7 @@ start:
     mov ah, 0x02
     mov al, 42
     mov ch, 0
-    mov cl, 4
+    mov cl, 3
     mov dh, 0
     int 0x13
     jc disk_error2

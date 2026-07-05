@@ -2,7 +2,6 @@
 #define KERNEL_PROCESS_SCHEDULER_H
 
 #include <stdint.h>
-#include <stdbool.h>
 #include "../include/kernel.h"
 
 /* Priority levels */

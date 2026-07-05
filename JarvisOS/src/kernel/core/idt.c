@@ -175,6 +175,11 @@ void irq0_handler(void) {
     outb(0x20, 0x20);
     extern uint64_t tick_count;
     tick_count++;
+    // conect scheduler to the hardware timer
+    extern void scheduler_tick(uint32_t delta_ms);
+    scheduler_tick(10);
+
+    // Call timer callback
     extern void (*timer_callback)(void);
     if (timer_callback != NULL) {
         timer_callback();

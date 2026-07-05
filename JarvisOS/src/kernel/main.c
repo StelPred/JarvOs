@@ -10,7 +10,7 @@ volatile uint32_t keyboard_interrupts = 0;
 // Simple VGA text mode driver for early debugging
 static volatile uint16_t* vga_buffer = (uint16_t*)0xB8000;
 static size_t vga_index = 0;
-
+extern void debug_mark(int slot, char c, uint8_t color);
 // Serial port for debugging
 extern void hal_serial_init(void);
 extern void hal_serial_write(const char* data, size_t len);
@@ -18,6 +18,7 @@ extern void hal_serial_write(const char* data, size_t len);
 // Keyboard
 extern void hal_keyboard_init(void);
 extern int hal_keyboard_getchar(void);
+
 
 // HAL functions
 extern void hal_init(void);
@@ -53,6 +54,7 @@ static void update_cursor(int pos) {
 }
 
 void vga_putchar(char c) {
+    volatile char* vga = (char*)0xB8000;
     if (c == '\n') {
         // Move to start of next line
         size_t next_line_start = ((vga_index / 80) + 1) * 80;
@@ -65,10 +67,13 @@ void vga_putchar(char c) {
     } else if (c == '\b') {  // Backspace
         if (vga_index > 0) {
             vga_index--;
-            vga_buffer[vga_index] = (uint16_t)' ' | 0x0F00;  // Clear character
+            vga[vga_index * 2]     = ' ';
+            vga[vga_index * 2 + 1] = 0x0F;
         }
     } else {
-        vga_buffer[vga_index++] = (uint16_t)c | 0x0F00;  // White on black
+        vga[vga_index * 2]     = c;
+        vga[vga_index * 2 + 1] = 0x0F;
+        vga_index++;
         // Wrap around if we hit the bottom
         if (vga_index >= 80 * 25) {
             vga_index = 0;
@@ -107,11 +112,6 @@ void keyboard_int_callback(void) {
 // Timer interrupt callback (called from IRQ handler)
 void timer_int_callback(void) {
     timer_ticks++;
-    // Show a visible timer tick every 10 interrupts in top-left corner
-    if (timer_ticks % 10 == 0) {
-        // Top-left corner character
-        vga_buffer[0] = (vga_buffer[0] & 0xFF00) | ((timer_ticks / 10) % 16);
-    }
 }
 
 // Simple command implementations (minimal for debugging)
@@ -133,13 +133,12 @@ static void cmd_mem(const char *args) {
     }
 }
 
+extern void hal_sleep_ms(uint32_t ms);
+
 static void cmd_timer(const char *args) {
     (void)args;
-    vga_puts("timer test\n");
-    hal_set_timer_frequency(10);
-    // Simple delay
-    for (volatile int i = 0; i < 1000000; i++) {}
-    hal_set_timer_frequency(100);
+    vga_puts("timer test - waiting 5 seconds\n");
+    hal_sleep_ms(5000);
     vga_puts("timer done\n");
 }
 
@@ -151,11 +150,15 @@ static void cmd_reboot(const char *args) {
 
 // Command interpreter - simplified for debugging with non-blocking input
 static void run_command_interpreter(void) {
-    vga_puts("\nDBG> ");  // Changed prompt to make it obvious
-    char buffer[16];
+    vga_puts("\n $ ");  // Changed prompt to make it obvious
+    debug_mark(0, 'X', 0x0E);
+    char buffer[64];
     int pos = 0;
 
     while (1) {
+        static uint32_t loop_count = 0;
+        loop_count++;
+        debug_mark(9, '0' + (loop_count % 10), 0x0E);
         // Non-blocking keyboard check
         if (hal_keyboard_key_available()) {
             int c = hal_keyboard_getchar();
@@ -164,24 +167,16 @@ static void run_command_interpreter(void) {
                 buffer[pos] = '\0';
                 vga_puts("\n");
 
-                if (strcmp(buffer, "help") == 0) cmd_help(NULL);
-                else if (strcmp(buffer, "mem") == 0) cmd_mem(NULL);
-                else if (strcmp(buffer, "timer") == 0) cmd_timer(NULL);
-                else if (strcmp(buffer, "reboot") == 0) cmd_reboot(NULL);
-                else {
-                    vga_puts("? ");
-                    vga_puts(buffer);
-                    vga_puts("\n");
-                }
+                shell_dispatch(buffer);
 
                 pos = 0;
-                vga_puts("DBG> ");
+                vga_puts(" $ ");
             } else if (c == '\b' && pos > 0) {
                 pos--;
                 vga_putchar('\b');
                 vga_putchar(' ');
                 vga_putchar('\b');
-            } else if (c >= 32 && c <= 126 && pos < 15) {
+            } else if (c >= 32 && c <= 126 && pos < 63) {
                 buffer[pos++] = c;
                 vga_putchar(c);
             }
@@ -202,39 +197,30 @@ static void run_command_interpreter(void) {
 }
 
 // Kernel entry point (called from boot2.asm after switching to protected mode)
-void kernel_main(void)
-{
-    // STAGE 1: VGA TEST
-    vga_puts("STAGE1: VGA ok\n");
+void kernel_main(void) {
+    // STAGE 0: VGA INIT
     for (int i = 0; i < 10; i++) {
         vga_putchar('0' + i);
     }
     vga_puts("\n");
 
+    // STAGE 1: SCHEDULER INIT
+    extern int scheduler_init(void);
+    scheduler_init();
     // STAGE 2: HAL INIT
-    vga_puts("STAGE2: HAL init\n");
     hal_init();
-    vga_puts("STAGE2: HAL done\n");
 
     // STAGE 3: TIMER SETUP
-    vga_puts("STAGE3: Timer setup\n");
     hal_set_timer_frequency(100);  // 100 Hz
-    vga_puts("STAGE3: Timer done\n");
 
     // STAGE 4: KEYBOARD SETUP
-    vga_puts("STAGE4: Keyboard setup\n");
     hal_keyboard_init();
-    vga_puts("STAGE4: Keyboard done\n");
 
     // STAGE 5: COMMAND REGISTRATION
-    vga_puts("STAGE5: Commands\n");
     shell_register_command("help", cmd_help, "Help");
     shell_register_command("mem", cmd_mem, "Memory test");
-    shell_register_command("timer", cmd_timer, "Timer test");
+    shell_register_command("timer", cmd_timer, "Test");
     shell_register_command("reboot", cmd_reboot, "Reboot");
-    vga_puts("STAGE5: Commands done\n");
 
-    // STAGE 6: ENTER INTERPRETER
-    vga_puts("STAGE6: Entering interpreter\n");
     run_command_interpreter();
 }

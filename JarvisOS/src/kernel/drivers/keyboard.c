@@ -68,7 +68,8 @@ void hal_keyboard_init(void) {
     status |= 0x01;  // Enable keyboard interrupts
     status &= ~0x02; // Disable mouse interrupts (we don't have mouse)
     status &= ~0x10; // Disable keyboard clock (not sure if needed)
-
+    status |= 0x40;  // Enable scancode translation (Set 2 -> Set 1)
+    
     // Wait for input buffer to be empty
     while (inb(KB_STATUS_PORT) & KB_STAT_IBF) {
         // Wait
@@ -113,6 +114,11 @@ int hal_keyboard_getchar(void) {
         }
 
         uint8_t scancode = hal_keyboard_read_scancode();
+        // extern void vga_puts(const char*);
+        // extern void vga_puthex(uint32_t);
+        // vga_puts("[");
+        // vga_puthex(scancode);
+        // vga_puts("]");
 
         // Handle shift press/release
         if (scancode == 0x2A || scancode == 0x36) { shift_pressed = 1; continue; }

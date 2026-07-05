@@ -2,6 +2,21 @@
 #include "../include/kernel.h"
 #include <string.h>
 
+#include "../memory/memory.h"
+
+#define PROCESS_STACK_SIZE 4096
+
+extern void context_switch(uint32_t **old_esp_ptr, uint32_t *new_esp);
+
+static void process_entry_trampoline(void) {
+    process_t *proc = scheduler_get_current_process();
+    void (*entry)(void*) = proc->entry_point;
+    void *arg = proc->arg;
+    entry(arg);
+    proc->state = PROCESS_STATE_TERMINATED;
+    for (;;) { __asm__ __volatile__("hlt"); }
+}
+
 #define MAX_PROCESSES 64
 
 static process_t process_pool[MAX_PROCESSES];
@@ -110,10 +125,10 @@ static process_t *pick_next_process(void) {
     return NULL; // No runnable process
 }
 
-int scheduler_create_process(const char *name, void (*entry)(void *), void *arg, process_priority_t priority) {
+process_t *scheduler_create_process(const char *name, void (*entry)(void *), void *arg, process_priority_t priority) {
     process_t *proc = allocate_process();
     if (proc == NULL) {
-        return KERNEL_FAILURE;
+        return NULL;
     }
 
     // Initialize the process control block
@@ -127,16 +142,26 @@ int scheduler_create_process(const char *name, void (*entry)(void *), void *arg,
     proc->memory_pages = 0; // To be set by memory subsystem
     proc->entry_point = entry;
     proc->arg = arg;
-    proc->stack_ptr = NULL; // To be set when we allocate a stack (simplified for now)
+    uint8_t *stack = (uint8_t*)kmalloc(PROCESS_STACK_SIZE);
+    if (!stack) {
+        release_process(proc);
+        return NULL;
+    }
+    uint32_t *sp = (uint32_t*)(stack + PROCESS_STACK_SIZE);
+    *(--sp) = (uint32_t)process_entry_trampoline;
+    *(--sp) = 0; // ebp
+    *(--sp) = 0; // ebx
+    *(--sp) = 0; // esi
+    *(--sp) = 0; // edi
+    proc->stack_ptr = sp;
     proc->next = NULL;
     proc->prev = NULL;
 
     // Add the process to the appropriate priority queue
     enqueue_process(proc);
-
-    return KERNEL_SUCCESS;
+    
+    return proc;
 }
-
 void scheduler_destroy_process(process_t *proc) {
     // Remove the process from any queue it might be in (simplified: we assume it's not in a queue when destroyed)
     // In a real implementation, we would need to remove it from the queue.
@@ -157,67 +182,24 @@ void scheduler_yield(void) {
 }
 
 void scheduler_tick(uint32_t delta_ms) {
-    // If we have a current process that is running, we update its CPU time and then preempt it if time slice expired
-    // For simplicity, we'll use a fixed time slice of 10ms and preempt on every tick.
-    // In a real system, we would compare delta_ms to a time slice.
+    process_t *prev = current_process;
 
     if (current_process != NULL && current_process->state == PROCESS_STATE_RUNNING) {
         current_process->cpu_time_ms += delta_ms;
-        // Preempt the current process: put it back in the queue
         enqueue_process(current_process);
         current_process = NULL;
     }
 
-    // Pick the next process to run
     process_t *next = pick_next_process();
     if (next != NULL) {
-        // Remove it from the queue
-        dequeue_process(next->priority); // We know the priority from the process, but we don't have it stored in the queue?
-        // Actually, we stored the process in the queue by priority, so we need to know the priority to dequeue from the correct queue.
-        // We have the priority in the process: next->priority
-        // But note: we already removed it from the queue in pick_next_process? No, we only peeked.
-        // So we need to dequeue it now.
-        // We'll change pick_next_process to return the process and also remove it?
-        // Let's refactor: we'll have pick_next_process return the process and remove it from the queue.
-        // But for now, we'll do:
-        //   We know the priority, so we can dequeue from that priority's queue.
-        // However, note: the process might have been moved to a different queue? No, priority doesn't change.
-        // So we can do:
-        //   dequeue_process(next->priority);
-        // But wait: our pick_next_process only returns the head of the queue for a priority, and we know that priority from the loop.
-        // We didn't store which priority we found. Let's change the function to return both the process and the priority.
-
-        // Given the time, let's change the design: we'll have pick_next_process return the process and we'll assume that the process is still in the queue.
-        // Then we remove it by searching the queue? That's inefficient.
-
-        // Instead, let's change pick_next_process to remove the process from the queue and return it.
-        // We'll do that by having the function also return the priority via an output parameter, or we can store the priority in the process and then we know which queue to remove from.
-
-        // We'll do the latter: we know the process's priority, so we can remove it from that queue.
-        // But note: the process might not be at the head of the queue anymore?
-        // In our current pick_next_process, we return the head of the queue for the first non-empty priority.
-        // So we know it is at the head of that queue.
-
-        // Therefore, we can do:
-        //   dequeue_process(next->priority);
-        // However, we must be sure that the process we got is indeed the head of that queue.
-
-        // Since we are returning the head, it is safe.
-
-        // But note: what if the queue changed between the time we looked and now?
-        // In a single-core system with interrupts disabled during the scheduler tick, it's safe.
-
-        // We'll assume interrupts are disabled when scheduler_tick is called.
-
-        // So:
-        dequeue_process(next->priority); // Remove the head of the queue for this priority
-
+        dequeue_process(next->priority);
         current_process = next;
-        // TODO: Actually switch to the next process (context switch)
-        // For now, we just set the current process and let the architecture code handle the switch.
     } else {
-        // No process to run, run the idle process
         current_process = &idle_process;
+    }
+
+    if (prev != current_process) {
+        context_switch((uint32_t**)&prev->stack_ptr, (uint32_t*)current_process->stack_ptr);
     }
 }
 

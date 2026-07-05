@@ -26,14 +26,15 @@ BOOT2_ASM = src/boot/boot2.asm
 
 # C source files
 KERNEL_C_SRCS = \
-	src/kernel/shell/commands.c \
 	src/kernel/entry.asm \
 	src/kernel/main.c \
 	src/kernel/core/cpu.c \
 	src/kernel/drivers/serial.c \
+	src/kernel/shell/commands.c \
 	src/kernel/drivers/keyboard.c \
 	src/kernel/memory/pmm.c \
 	src/kernel/memory/vmm.c \
+	src/kernel/memory/memory.c \
 	src/kernel/drivers/pic.c \
 	src/kernel/drivers/pit.c \
 	src/kernel/drivers/dma.c \
@@ -43,8 +44,9 @@ KERNEL_C_SRCS = \
 	src/kernel/syscall.c \
 	src/kernel/interrupt/syscall_stub.asm \
 	src/kernel/ipc/msg.c \
-	src/kernel/core/interrupt.asm
-
+	src/kernel/core/interrupt.asm \
+	src/kernel/process/scheduler.c \
+    src/kernel/process/context_switch.asm \
 # Object files
 KERNEL_OBJS = $(KERNEL_C_SRCS:.c=.o)
 KERNEL_OBJS := $(KERNEL_OBJS:.asm=.o)
@@ -86,11 +88,11 @@ floppy.img: boot.bin boot2.bin kernel.bin
 	# Copy stage 2 boot loader
 	dd if=boot2.bin of=floppy.img bs=512 seek=1 conv=notrunc
 	# Copy kernel
-	dd if=kernel.bin of=floppy.img bs=512 seek=3 conv=notrunc
+	dd if=kernel.bin of=floppy.img bs=512 seek=9 conv=notrunc
 
 # Run in QEMU
 run: floppy.img
-	qemu-system-x86_64 -fda floppy.img -d int,cpu_reset -no-reboot -no-shutdown -D qemu.log -monitor stdio
+	qemu-system-x86_64 -fda floppy.img -d int,cpu_reset -no-reboot -no-shutdown -D qemu.log -monitor stdio -display sdl
 
 # Clean up
 clean:

@@ -190,7 +190,7 @@ uint32_t* vmm_get_current_directory(void) {
 void vmm_enable_paging(void) {
     uint32_t cr0;
     __asm__ __volatile__("mov %%cr0, %0" : "=r"(cr0));
-    cr0 |= PAGE_PRESENT; // Set the paging bit (bit 31)
+    cr0 |= 0x80000000; // Set the paging bit (bit 31, PG)
     __asm__ __volatile__("mov %0, %%cr0" : : "r"(cr0));
     // Far jump to flush instruction pipeline after changing CR0
     __asm__ __volatile__("jmpl $0x08, $next\n\t"

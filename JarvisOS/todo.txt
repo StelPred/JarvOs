@@ -1,0 +1,25 @@
+[ ] Implement round-robin task/process structure (PCB: registers, stack ptr, state)
+[ ] Save/restore CPU state on context switch (build on existing pusha/popa in isr32)
+[ ] Hook scheduler into IRQ0 (timer_callback) to trigger task switches
+[ ] Implement a ready queue for tasks
+[ ] Add kernel stack allocation per task (use pmm_alloc_page)
+[ ] Implement basic fork()-like task creation
+[ ] Wire sys_exit to actually remove a task from the scheduler
+[ ] Add a simple sleep queue (tasks blocked until tick_count target) instead of busy-hlt loop
+[ ] Fix vmm_map_page to allocate new page tables beyond the first 8MB (currently only 2 static tables exist)
+[ ] Extend paging to identity-map all detected physical memory (not just 8MB)
+[ ] Implement pmm_init properly (check current bitmap/free-list logic against actual detected memory size)
+[ ] Add a memory map / detect available RAM (e.g. via BIOS INT 15h E820, must happen in real mode before protected mode switch)
+[ ] Implement kmalloc/kfree backed by pmm+vmm (currently only user-space libc malloc exists)
+[ ] Fix io_wait() duplication cleanup across drivers (confirm no other dupes remain)
+[ ] Implement sys_write to route to vga_puts/serial (first real usable syscall)
+[ ] Wire syscall_handler dispatch table cleanup (remove implicit-declaration warnings properly)
+[ ] Add a basic ELF loader or flat binary loader (needed before execve can do anything)
+[ ] Implement a simple in-memory or floppy-based filesystem (needed for open/read/write to mean something)
+[ ] Add reboot/power state fixes (currently freeze on reboot command)
+[ ] Add proper GPF/page-fault diagnostic output in exception_handler (currently just halts silently)
+[ ] Clean up unused-parameter warnings in syscall.c stubs (cosmetic, low priority)
+
+
+
+use lua for the ai

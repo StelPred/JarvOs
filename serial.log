@@ -1,6 +1,0 @@
-STAGE1 scheduler_init
-STAGE2 hal_init
-STAGE2b-pre-enable-paging
-STAGE2b-dir-switched
-STAGE2b-paging-enabled
-STAGE2b vmm_init
